@@ -8,6 +8,7 @@ create table if not exists public.lists (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references auth.users(id) on delete cascade not null,
   name text not null check (char_length(name) > 0 and char_length(name) <= 200),
+  prioritized boolean default false not null,
   created_at timestamptz default now() not null
 );
 
@@ -19,6 +20,7 @@ create table if not exists public.tasks (
   text text not null check (char_length(text) > 0 and char_length(text) <= 2000),
   done boolean default false not null,
   starred boolean default false not null,
+  priority text check (priority is null or priority in ('high', 'medium', 'low')),
   created_at timestamptz default now() not null,
   done_at timestamptz
 );
@@ -29,6 +31,7 @@ create index if not exists lists_created_at_idx on public.lists(created_at);
 create index if not exists tasks_list_id_idx on public.tasks(list_id);
 create index if not exists tasks_user_id_idx on public.tasks(user_id);
 create index if not exists tasks_created_at_idx on public.tasks(created_at);
+create index if not exists tasks_priority_idx on public.tasks(priority);
 
 -- =====================================================
 -- Row-level security

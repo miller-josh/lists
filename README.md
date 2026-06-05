@@ -117,7 +117,16 @@ Row-level security policies ensure users can only read and write their own rows.
 - Edit task text by clicking on it
 - Star tasks to float them to the top
 - Edit list names (pencil icon next to the list in the sidebar)
+- Per-list priority mode: flip the flag icon on a list to enable high/medium/low priorities on its tasks. Prioritized lists sort by priority first, then star, then creation order.
 - Confirm dialogs for destructive actions
 - Responsive design: persistent sidebar on desktop, drawer on mobile
 - Magic-link auth (no passwords)
 - Returns you to the last list you were viewing
+
+## Database migrations
+
+The `supabase/schema.sql` file is the canonical schema for a fresh install. When the schema evolves, additive migrations live in `supabase/migrations/` and need to be applied to existing databases manually via the Supabase SQL editor. Migrations are written to be idempotent (safe to re-run).
+
+Applied migrations:
+
+- `001_priorities.sql` — adds `lists.prioritized` (boolean) and `tasks.priority` (text, nullable). Apply if your existing database predates the priority feature.

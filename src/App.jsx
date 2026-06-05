@@ -1,9 +1,22 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Plus, Check, Trash2, ChevronLeft, X, Pencil, ChevronDown, ListChecks, Star } from 'lucide-react';
+import { Plus, Check, Trash2, ChevronLeft, X, Pencil, ChevronDown, ListChecks, Star, Flag } from 'lucide-react';
 import { supabase } from './supabase';
 import Auth from './Auth';
 
 const LAST_LIST_KEY = 'lists.lastListId';
+
+// Priority configuration. null = no priority.
+const PRIORITY_COLORS = {
+  high: '#B84A2C',
+  medium: '#C66E2E',
+  low: '#6B7C5E'
+};
+const PRIORITY_RANK = { high: 0, medium: 1, low: 2 }; // lower = higher in sort order
+const PRIORITY_CYCLE = [null, 'high', 'medium', 'low']; // click to advance through these
+const nextPriority = (current) => {
+  const idx = PRIORITY_CYCLE.indexOf(current ?? null);
+  return PRIORITY_CYCLE[(idx + 1) % PRIORITY_CYCLE.length];
+};
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -193,6 +206,32 @@ export default function App() {
     }
   };
 
+  const toggleListPrioritized = async (id) => {
+    const list = data.lists.find(l => l.id === id);
+    if (!list) return;
+    const newValue = !list.prioritized;
+
+    // Optimistic
+    setData(prev => ({
+      ...prev,
+      lists: prev.lists.map(l => (l.id === id ? { ...l, prioritized: newValue } : l))
+    }));
+
+    const { error } = await supabase
+      .from('lists')
+      .update({ prioritized: newValue })
+      .eq('id', id);
+
+    if (error) {
+      // Revert
+      setData(prev => ({
+        ...prev,
+        lists: prev.lists.map(l => (l.id === id ? { ...l, prioritized: !newValue } : l))
+      }));
+      alert('Could not change list priority mode: ' + error.message);
+    }
+  };
+
   const selectList = (id) => {
     setData(prev => ({ ...prev, currentListId: id }));
     setSidebarOpen(false);
@@ -307,6 +346,43 @@ export default function App() {
         }
       }));
       console.error('Could not star task:', error);
+    }
+  };
+
+  const cyclePriority = async (taskId) => {
+    if (!data.currentListId) return;
+    const listId = data.currentListId;
+    const task = (data.tasks[listId] || []).find(t => t.id === taskId);
+    if (!task) return;
+
+    const newPriority = nextPriority(task.priority);
+
+    setData(prev => ({
+      ...prev,
+      tasks: {
+        ...prev.tasks,
+        [listId]: prev.tasks[listId].map(t =>
+          t.id === taskId ? { ...t, priority: newPriority } : t
+        )
+      }
+    }));
+
+    const { error } = await supabase
+      .from('tasks')
+      .update({ priority: newPriority })
+      .eq('id', taskId);
+
+    if (error) {
+      setData(prev => ({
+        ...prev,
+        tasks: {
+          ...prev.tasks,
+          [listId]: prev.tasks[listId].map(t =>
+            t.id === taskId ? { ...t, priority: task.priority } : t
+          )
+        }
+      }));
+      console.error('Could not change task priority:', error);
     }
   };
 
@@ -426,9 +502,17 @@ export default function App() {
   // ============ Derived ============
   const currentList = data.lists.find(l => l.id === data.currentListId);
   const currentTasks = data.currentListId ? (data.tasks[data.currentListId] || []) : [];
+  const isPrioritized = !!currentList?.prioritized;
   const incompleteTasks = currentTasks
     .filter(t => !t.done)
     .sort((a, b) => {
+      // In prioritized lists, priority is the primary sort dimension.
+      if (isPrioritized) {
+        const aRank = a.priority ? PRIORITY_RANK[a.priority] : 99;
+        const bRank = b.priority ? PRIORITY_RANK[b.priority] : 99;
+        if (aRank !== bRank) return aRank - bRank;
+      }
+      // Within a priority group (or always, for non-prioritized lists), star comes first.
       if (a.starred && !b.starred) return -1;
       if (!a.starred && b.starred) return 1;
       return new Date(a.created_at) - new Date(b.created_at);
@@ -526,12 +610,21 @@ export default function App() {
                   <button
                     onClick={() => selectList(list.id)}
                     className={`
-                      w-full text-left pl-3 pr-20 py-2 rounded-lg flex items-center justify-between gap-2
+                      w-full text-left pl-3 pr-28 py-2 rounded-lg flex items-center justify-between gap-2
                       transition-colors duration-150
                       ${isActive ? 'bg-ink text-active' : 'text-ink hover-warm'}
                     `}
                   >
-                    <span className="truncate text-sm font-medium">{list.name}</span>
+                    <span className="truncate text-sm font-medium flex items-center gap-1.5 min-w-0">
+                      {list.prioritized && (
+                        <Flag
+                          className={`w-3 h-3 shrink-0 ${isActive ? 'text-faint' : 'text-muted'}`}
+                          fill="currentColor"
+                          strokeWidth={0}
+                        />
+                      )}
+                      <span className="truncate">{list.name}</span>
+                    </span>
                     {count > 0 && (
                       <span className={`text-xs tabular-nums shrink-0 ml-auto ${isActive ? 'text-faint' : 'text-muted'}`}>
                         {count}
@@ -553,6 +646,21 @@ export default function App() {
                       aria-label="Rename list"
                     >
                       <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleListPrioritized(list.id);
+                      }}
+                      className={`p-1.5 rounded transition-colors ${isActive ? 'hover:bg-white/10 text-faint hover:text-active' : 'hover:bg-black/5 text-muted hover:text-ink'}`}
+                      aria-label={list.prioritized ? 'Disable priorities on this list' : 'Enable priorities on this list'}
+                      title={list.prioritized ? 'Priorities on' : 'Priorities off'}
+                    >
+                      <Flag
+                        className="w-3.5 h-3.5"
+                        fill={list.prioritized ? 'currentColor' : 'none'}
+                        strokeWidth={1.75}
+                      />
                     </button>
                     <button
                       onClick={(e) => {
@@ -674,6 +782,7 @@ export default function App() {
                           key={task.id}
                           task={task}
                           isDesktop={isDesktop}
+                          isPrioritized={isPrioritized}
                           isEditing={editingTaskId === task.id}
                           editingText={editingTaskText}
                           onToggle={() => toggleTask(task.id)}
@@ -683,6 +792,7 @@ export default function App() {
                           onEditSave={saveEditTask}
                           onEditCancel={cancelEditTask}
                           onToggleStar={() => toggleStar(task.id)}
+                          onCyclePriority={() => cyclePriority(task.id)}
                         />
                       ))}
                     </ul>
@@ -722,6 +832,7 @@ export default function App() {
                               key={task.id}
                               task={task}
                               isDesktop={isDesktop}
+                              isPrioritized={isPrioritized}
                               isEditing={editingTaskId === task.id}
                               editingText={editingTaskText}
                               onToggle={() => toggleTask(task.id)}
@@ -731,6 +842,7 @@ export default function App() {
                               onEditSave={saveEditTask}
                               onEditCancel={cancelEditTask}
                               onToggleStar={() => toggleStar(task.id)}
+                              onCyclePriority={() => cyclePriority(task.id)}
                             />
                           ))}
                         </ul>
@@ -789,6 +901,7 @@ export default function App() {
 function TaskItem({
   task,
   isDesktop,
+  isPrioritized,
   isEditing,
   editingText,
   onToggle,
@@ -797,8 +910,14 @@ function TaskItem({
   onEditChange,
   onEditSave,
   onEditCancel,
-  onToggleStar
+  onToggleStar,
+  onCyclePriority
 }) {
+  const priorityColor = task.priority ? PRIORITY_COLORS[task.priority] : null;
+  const priorityLabel = task.priority
+    ? `Priority: ${task.priority}. Click to change.`
+    : 'Set priority';
+
   return (
     <li className="group flex items-center gap-2 px-3 py-2.5 rounded-lg hover-warm transition-colors">
       <button
@@ -844,6 +963,24 @@ function TaskItem({
 
       {!isEditing && (
         <div className="flex items-center gap-0.5 shrink-0">
+          {isPrioritized && (
+            <button
+              onClick={onCyclePriority}
+              className={`
+                p-1.5 hover:bg-black/5 rounded-md transition-colors
+                ${task.done ? 'opacity-50' : ''}
+              `}
+              aria-label={priorityLabel}
+              title={priorityLabel}
+            >
+              <Flag
+                className="w-4 h-4"
+                fill={priorityColor || 'none'}
+                stroke={priorityColor || '#B5AE9D'}
+                strokeWidth={1.75}
+              />
+            </button>
+          )}
           <button
             onClick={onToggleStar}
             className="p-1.5 hover:bg-black/5 rounded-md transition-colors"
