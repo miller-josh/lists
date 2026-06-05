@@ -11,12 +11,12 @@ const PRIORITY_COLORS = {
   medium: '#C66E2E',
   low: '#6B7C5E'
 };
-const PRIORITY_RANK = { high: 0, medium: 1, low: 2 }; // lower = higher in sort order
-const PRIORITY_CYCLE = [null, 'high', 'medium', 'low']; // click to advance through these
-const nextPriority = (current) => {
-  const idx = PRIORITY_CYCLE.indexOf(current ?? null);
-  return PRIORITY_CYCLE[(idx + 1) % PRIORITY_CYCLE.length];
+const PRIORITY_LABELS = {
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low'
 };
+const PRIORITY_ORDER = ['high', 'medium', 'low', 'none'];
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -36,6 +36,7 @@ export default function App() {
   const [showCompleted, setShowCompleted] = useState(true);
   const [confirmDeleteList, setConfirmDeleteList] = useState(null);
   const [confirmClearCompleted, setConfirmClearCompleted] = useState(false);
+  const [openPriorityMenuTaskId, setOpenPriorityMenuTaskId] = useState(null);
 
   const taskInputRef = useRef(null);
 
@@ -349,13 +350,13 @@ export default function App() {
     }
   };
 
-  const cyclePriority = async (taskId) => {
+  const setPriority = async (taskId, newPriority) => {
+    setOpenPriorityMenuTaskId(null);
     if (!data.currentListId) return;
     const listId = data.currentListId;
     const task = (data.tasks[listId] || []).find(t => t.id === taskId);
     if (!task) return;
-
-    const newPriority = nextPriority(task.priority);
+    if (task.priority === newPriority) return; // no-op
 
     setData(prev => ({
       ...prev,
@@ -506,22 +507,48 @@ export default function App() {
   const incompleteTasks = currentTasks
     .filter(t => !t.done)
     .sort((a, b) => {
-      // In prioritized lists, priority is the primary sort dimension.
-      if (isPrioritized) {
-        const aRank = a.priority ? PRIORITY_RANK[a.priority] : 99;
-        const bRank = b.priority ? PRIORITY_RANK[b.priority] : 99;
-        if (aRank !== bRank) return aRank - bRank;
-      }
       // Within a priority group (or always, for non-prioritized lists), star comes first.
       if (a.starred && !b.starred) return -1;
       if (!a.starred && b.starred) return 1;
       return new Date(a.created_at) - new Date(b.created_at);
     });
+  // When prioritized, split into groups while preserving sort order within each.
+  const tasksByPriority = isPrioritized
+    ? {
+        high: incompleteTasks.filter(t => t.priority === 'high'),
+        medium: incompleteTasks.filter(t => t.priority === 'medium'),
+        low: incompleteTasks.filter(t => t.priority === 'low'),
+        none: incompleteTasks.filter(t => !t.priority)
+      }
+    : null;
   const completedTasks = currentTasks
     .filter(t => t.done)
     .sort((a, b) => new Date(b.done_at || 0) - new Date(a.done_at || 0));
   const incompleteCountFor = (listId) =>
     (data.tasks[listId] || []).filter(t => !t.done).length;
+
+  // Helper to render a TaskItem with all the props it needs.
+  const renderTaskItem = (task) => (
+    <TaskItem
+      key={task.id}
+      task={task}
+      isDesktop={isDesktop}
+      isPrioritized={isPrioritized}
+      isEditing={editingTaskId === task.id}
+      editingText={editingTaskText}
+      isPriorityMenuOpen={openPriorityMenuTaskId === task.id}
+      onToggle={() => toggleTask(task.id)}
+      onDelete={() => deleteTask(task.id)}
+      onStartEdit={() => startEditTask(task.id, task.text)}
+      onEditChange={setEditingTaskText}
+      onEditSave={saveEditTask}
+      onEditCancel={cancelEditTask}
+      onToggleStar={() => toggleStar(task.id)}
+      onOpenPriorityMenu={() => setOpenPriorityMenuTaskId(task.id)}
+      onClosePriorityMenu={() => setOpenPriorityMenuTaskId(null)}
+      onSetPriority={(p) => setPriority(task.id, p)}
+    />
+  );
 
   // ============ Render ============
   if (authLoading) {
@@ -776,26 +803,26 @@ export default function App() {
               ) : (
                 <>
                   {incompleteTasks.length > 0 ? (
-                    <ul className="space-y-0.5">
-                      {incompleteTasks.map(task => (
-                        <TaskItem
-                          key={task.id}
-                          task={task}
-                          isDesktop={isDesktop}
-                          isPrioritized={isPrioritized}
-                          isEditing={editingTaskId === task.id}
-                          editingText={editingTaskText}
-                          onToggle={() => toggleTask(task.id)}
-                          onDelete={() => deleteTask(task.id)}
-                          onStartEdit={() => startEditTask(task.id, task.text)}
-                          onEditChange={setEditingTaskText}
-                          onEditSave={saveEditTask}
-                          onEditCancel={cancelEditTask}
-                          onToggleStar={() => toggleStar(task.id)}
-                          onCyclePriority={() => cyclePriority(task.id)}
-                        />
-                      ))}
-                    </ul>
+                    isPrioritized ? (
+                      <div>
+                        {PRIORITY_ORDER.map(key => {
+                          const groupTasks = tasksByPriority[key];
+                          if (!groupTasks || groupTasks.length === 0) return null;
+                          return (
+                            <div key={key} className="mb-4 last:mb-0">
+                              <PrioritySectionHeader priority={key} count={groupTasks.length} />
+                              <ul className="space-y-0.5">
+                                {groupTasks.map(task => renderTaskItem(task))}
+                              </ul>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <ul className="space-y-0.5">
+                        {incompleteTasks.map(task => renderTaskItem(task))}
+                      </ul>
+                    )
                   ) : (
                     <div className="text-center py-10">
                       <div className="font-display italic text-2xl text-ink mb-1">all done</div>
@@ -827,24 +854,7 @@ export default function App() {
                       </div>
                       {showCompleted && (
                         <ul className="space-y-0.5">
-                          {completedTasks.map(task => (
-                            <TaskItem
-                              key={task.id}
-                              task={task}
-                              isDesktop={isDesktop}
-                              isPrioritized={isPrioritized}
-                              isEditing={editingTaskId === task.id}
-                              editingText={editingTaskText}
-                              onToggle={() => toggleTask(task.id)}
-                              onDelete={() => deleteTask(task.id)}
-                              onStartEdit={() => startEditTask(task.id, task.text)}
-                              onEditChange={setEditingTaskText}
-                              onEditSave={saveEditTask}
-                              onEditCancel={cancelEditTask}
-                              onToggleStar={() => toggleStar(task.id)}
-                              onCyclePriority={() => cyclePriority(task.id)}
-                            />
-                          ))}
+                          {completedTasks.map(task => renderTaskItem(task))}
                         </ul>
                       )}
                     </div>
@@ -904,6 +914,7 @@ function TaskItem({
   isPrioritized,
   isEditing,
   editingText,
+  isPriorityMenuOpen,
   onToggle,
   onDelete,
   onStartEdit,
@@ -911,11 +922,13 @@ function TaskItem({
   onEditSave,
   onEditCancel,
   onToggleStar,
-  onCyclePriority
+  onOpenPriorityMenu,
+  onClosePriorityMenu,
+  onSetPriority
 }) {
   const priorityColor = task.priority ? PRIORITY_COLORS[task.priority] : null;
   const priorityLabel = task.priority
-    ? `Priority: ${task.priority}. Click to change.`
+    ? `Priority: ${PRIORITY_LABELS[task.priority]}. Click to change.`
     : 'Set priority';
 
   return (
@@ -964,22 +977,37 @@ function TaskItem({
       {!isEditing && (
         <div className="flex items-center gap-0.5 shrink-0">
           {isPrioritized && (
-            <button
-              onClick={onCyclePriority}
-              className={`
-                p-1.5 hover:bg-black/5 rounded-md transition-colors
-                ${task.done ? 'opacity-50' : ''}
-              `}
-              aria-label={priorityLabel}
-              title={priorityLabel}
-            >
-              <Flag
-                className="w-4 h-4"
-                fill={priorityColor || 'none'}
-                stroke={priorityColor || '#B5AE9D'}
-                strokeWidth={1.75}
-              />
-            </button>
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (isPriorityMenuOpen) onClosePriorityMenu();
+                  else onOpenPriorityMenu();
+                }}
+                className={`
+                  p-1.5 hover:bg-black/5 rounded-md transition-colors
+                  ${task.done ? 'opacity-50' : ''}
+                  ${isPriorityMenuOpen ? 'bg-black/5' : ''}
+                `}
+                aria-label={priorityLabel}
+                aria-haspopup="menu"
+                aria-expanded={isPriorityMenuOpen}
+              >
+                <Flag
+                  className="w-4 h-4"
+                  fill={priorityColor || 'none'}
+                  stroke={priorityColor || '#B5AE9D'}
+                  strokeWidth={1.75}
+                />
+              </button>
+              {isPriorityMenuOpen && (
+                <PriorityMenu
+                  current={task.priority}
+                  onSelect={onSetPriority}
+                  onClose={onClosePriorityMenu}
+                />
+              )}
+            </div>
           )}
           <button
             onClick={onToggleStar}
@@ -1006,6 +1034,88 @@ function TaskItem({
         </div>
       )}
     </li>
+  );
+}
+
+function PriorityMenu({ current, onSelect, onClose }) {
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        onClose();
+      }
+    };
+    // Use a slight delay so the click that opened the menu doesn't immediately close it.
+    const timeout = setTimeout(() => {
+      document.addEventListener('mousedown', handler);
+    }, 0);
+    return () => {
+      clearTimeout(timeout);
+      document.removeEventListener('mousedown', handler);
+    };
+  }, [onClose]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  const options = [
+    { value: 'high', label: 'High', color: PRIORITY_COLORS.high },
+    { value: 'medium', label: 'Medium', color: PRIORITY_COLORS.medium },
+    { value: 'low', label: 'Low', color: PRIORITY_COLORS.low },
+    { value: null, label: 'None', color: null }
+  ];
+
+  return (
+    <div
+      ref={menuRef}
+      role="menu"
+      className="absolute right-0 top-full mt-1 bg-surface rounded-lg shadow-xl border border-warm z-20 py-1 min-w-[140px] fade-in"
+    >
+      {options.map(opt => {
+        const isSelected = current === opt.value || (current == null && opt.value == null);
+        return (
+          <button
+            key={opt.value || 'none'}
+            role="menuitem"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect(opt.value);
+            }}
+            className="w-full text-left px-3 py-2 text-sm hover-warm flex items-center gap-2.5 transition-colors"
+          >
+            {opt.color ? (
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: opt.color }} />
+            ) : (
+              <span className="w-2.5 h-2.5 rounded-full border border-warmer shrink-0" />
+            )}
+            <span className={`text-ink ${isSelected ? 'font-medium' : ''}`}>{opt.label}</span>
+            {isSelected && <Check className="w-3.5 h-3.5 ml-auto text-muted shrink-0" strokeWidth={2.5} />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function PrioritySectionHeader({ priority, count }) {
+  const color = priority === 'none' ? null : PRIORITY_COLORS[priority];
+  const label = priority === 'none' ? 'No priority' : PRIORITY_LABELS[priority];
+  return (
+    <div className="flex items-center gap-2 px-3 py-1.5 mt-1">
+      {color ? (
+        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+      ) : (
+        <span className="w-2 h-2 rounded-full border border-warmer shrink-0" />
+      )}
+      <span className="text-xs font-medium uppercase tracking-wider text-muted">{label}</span>
+      <span className="text-xs text-faint tabular-nums">· {count}</span>
+    </div>
   );
 }
 
