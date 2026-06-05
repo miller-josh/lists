@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Plus, Check, Trash2, ChevronLeft, X, Pencil, ChevronDown, ListChecks, Star, Flag } from 'lucide-react';
+import { Plus, Check, Trash2, ChevronLeft, X, Pencil, ChevronDown, ListChecks, Star, Flag, Clock } from 'lucide-react';
 import { supabase } from './supabase';
 import Auth from './Auth';
 
@@ -17,6 +17,18 @@ const PRIORITY_LABELS = {
   low: 'Low'
 };
 const PRIORITY_ORDER = ['high', 'medium', 'low', 'none'];
+
+// Convert a numeric hours value to a display string like "1.5" or "2".
+// Returns null for null/undefined/invalid.
+const formatHours = (n) => {
+  if (n == null) return null;
+  const num = Number(n);
+  if (isNaN(num)) return null;
+  return num.toString();
+};
+
+const sumHours = (tasks) =>
+  tasks.reduce((sum, t) => sum + (Number(t.hours_estimate) || 0), 0);
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -387,6 +399,44 @@ export default function App() {
     }
   };
 
+  const setHoursEstimate = async (taskId, newHours) => {
+    if (!data.currentListId) return;
+    const listId = data.currentListId;
+    const task = (data.tasks[listId] || []).find(t => t.id === taskId);
+    if (!task) return;
+    const currentValue = task.hours_estimate ?? null;
+    // No-op if unchanged.
+    if ((currentValue == null && newHours == null) || Number(currentValue) === Number(newHours)) return;
+
+    setData(prev => ({
+      ...prev,
+      tasks: {
+        ...prev.tasks,
+        [listId]: prev.tasks[listId].map(t =>
+          t.id === taskId ? { ...t, hours_estimate: newHours } : t
+        )
+      }
+    }));
+
+    const { error } = await supabase
+      .from('tasks')
+      .update({ hours_estimate: newHours })
+      .eq('id', taskId);
+
+    if (error) {
+      setData(prev => ({
+        ...prev,
+        tasks: {
+          ...prev.tasks,
+          [listId]: prev.tasks[listId].map(t =>
+            t.id === taskId ? { ...t, hours_estimate: currentValue } : t
+          )
+        }
+      }));
+      console.error('Could not update hours estimate:', error);
+    }
+  };
+
   const startEditTask = (taskId, currentText) => {
     setEditingTaskId(taskId);
     setEditingTaskText(currentText);
@@ -547,6 +597,7 @@ export default function App() {
       onOpenPriorityMenu={() => setOpenPriorityMenuTaskId(task.id)}
       onClosePriorityMenu={() => setOpenPriorityMenuTaskId(null)}
       onSetPriority={(p) => setPriority(task.id, p)}
+      onSetHoursEstimate={(h) => setHoursEstimate(task.id, h)}
     />
   );
 
@@ -810,7 +861,11 @@ export default function App() {
                           if (!groupTasks || groupTasks.length === 0) return null;
                           return (
                             <div key={key} className="mb-4 last:mb-0">
-                              <PrioritySectionHeader priority={key} count={groupTasks.length} />
+                              <PrioritySectionHeader
+                                priority={key}
+                                count={groupTasks.length}
+                                totalHours={sumHours(groupTasks)}
+                              />
                               <ul className="space-y-0.5">
                                 {groupTasks.map(task => renderTaskItem(task))}
                               </ul>
@@ -908,6 +963,77 @@ export default function App() {
   );
 }
 
+function HoursInput({ value, onSave }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [tempValue, setTempValue] = useState('');
+
+  const startEdit = (e) => {
+    e.stopPropagation();
+    setTempValue(value != null ? String(value) : '');
+    setIsEditing(true);
+  };
+
+  const save = () => {
+    const trimmed = tempValue.trim();
+    if (trimmed === '') {
+      onSave(null);
+    } else {
+      const num = parseFloat(trimmed);
+      if (isNaN(num) || num < 0) {
+        // Invalid input. Close without saving.
+      } else if (num === 0) {
+        onSave(null);
+      } else {
+        onSave(num);
+      }
+    }
+    setIsEditing(false);
+    setTempValue('');
+  };
+
+  const cancel = () => {
+    setIsEditing(false);
+    setTempValue('');
+  };
+
+  if (isEditing) {
+    return (
+      <input
+        type="text"
+        inputMode="decimal"
+        value={tempValue}
+        onChange={(e) => setTempValue(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') save();
+          if (e.key === 'Escape') cancel();
+        }}
+        autoFocus
+        placeholder="hrs"
+        aria-label="Hours estimate"
+        className="w-14 text-xs text-ink bg-app rounded px-1.5 py-1 border border-warmer outline-none text-right tabular-nums"
+        onClick={(e) => e.stopPropagation()}
+      />
+    );
+  }
+
+  const display = formatHours(value);
+  return (
+    <button
+      onClick={startEdit}
+      className="px-1.5 py-1 hover:bg-black/5 rounded transition-colors min-w-[2.25rem] flex items-center justify-end"
+      aria-label={display != null ? `Hours estimate: ${display}. Click to change.` : 'Add hours estimate'}
+      title={display != null ? `${display} hours` : 'Add hours estimate'}
+    >
+      {display != null ? (
+        <span className="text-xs text-muted tabular-nums">{display}h</span>
+      ) : (
+        <Clock className="w-3.5 h-3.5 text-faint" strokeWidth={1.75} />
+      )}
+    </button>
+  );
+}
+
 function TaskItem({
   task,
   isDesktop,
@@ -924,7 +1050,8 @@ function TaskItem({
   onToggleStar,
   onOpenPriorityMenu,
   onClosePriorityMenu,
-  onSetPriority
+  onSetPriority,
+  onSetHoursEstimate
 }) {
   const priorityColor = task.priority ? PRIORITY_COLORS[task.priority] : null;
   const priorityLabel = task.priority
@@ -976,6 +1103,12 @@ function TaskItem({
 
       {!isEditing && (
         <div className="flex items-center gap-0.5 shrink-0">
+          {isPrioritized && (
+            <HoursInput
+              value={task.hours_estimate}
+              onSave={onSetHoursEstimate}
+            />
+          )}
           {isPrioritized && (
             <div className="relative">
               <button
@@ -1103,7 +1236,7 @@ function PriorityMenu({ current, onSelect, onClose }) {
   );
 }
 
-function PrioritySectionHeader({ priority, count }) {
+function PrioritySectionHeader({ priority, count, totalHours }) {
   const color = priority === 'none' ? null : PRIORITY_COLORS[priority];
   const label = priority === 'none' ? 'No priority' : PRIORITY_LABELS[priority];
   return (
@@ -1115,6 +1248,9 @@ function PrioritySectionHeader({ priority, count }) {
       )}
       <span className="text-xs font-medium uppercase tracking-wider text-muted">{label}</span>
       <span className="text-xs text-faint tabular-nums">· {count}</span>
+      {totalHours > 0 && (
+        <span className="text-xs text-faint tabular-nums">· {formatHours(totalHours)}h</span>
+      )}
     </div>
   );
 }
