@@ -1,7 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Plus, Check, Trash2, ChevronLeft, X, Pencil, ChevronDown, ListChecks, Star, Flag, Clock } from 'lucide-react';
+import { Plus, Check, Trash2, ChevronLeft, X, Pencil, ChevronDown, ListChecks, Star, Flag, Clock, Sun, CloudRain, Snowflake } from 'lucide-react';
 import { supabase } from './supabase';
 import Auth from './Auth';
+
+// Weather toggle cycles: none -> sun -> rain -> snow -> none.
+const WEATHER_CYCLE = [null, 'sun', 'rain', 'snow'];
+const WEATHER_CONFIG = {
+  sun: { Icon: Sun, color: '#D4923A', label: 'Sun' },
+  rain: { Icon: CloudRain, color: '#4A7FB5', label: 'Rain' },
+  snow: { Icon: Snowflake, color: '#6FB3C9', label: 'Snow' }
+};
 
 const LAST_LIST_KEY = 'lists.lastListId';
 
@@ -399,6 +407,36 @@ export default function App() {
     }
   };
 
+  const cycleWeather = async (taskId) => {
+    if (!data.currentListId) return;
+    const listId = data.currentListId;
+    const task = (data.tasks[listId] || []).find(t => t.id === taskId);
+    if (!task) return;
+    const current = task.weather ?? null;
+    const next = WEATHER_CYCLE[(WEATHER_CYCLE.indexOf(current) + 1) % WEATHER_CYCLE.length];
+
+    const apply = (value) => setData(prev => ({
+      ...prev,
+      tasks: {
+        ...prev.tasks,
+        [listId]: prev.tasks[listId].map(t =>
+          t.id === taskId ? { ...t, weather: value } : t
+        )
+      }
+    }));
+    apply(next);
+
+    const { error } = await supabase
+      .from('tasks')
+      .update({ weather: next })
+      .eq('id', taskId);
+
+    if (error) {
+      apply(current);
+      console.error('Could not change task weather:', error);
+    }
+  };
+
   const setHoursEstimate = async (taskId, newHours) => {
     if (!data.currentListId) return;
     const listId = data.currentListId;
@@ -598,6 +636,7 @@ export default function App() {
       onClosePriorityMenu={() => setOpenPriorityMenuTaskId(null)}
       onSetPriority={(p) => setPriority(task.id, p)}
       onSetHoursEstimate={(h) => setHoursEstimate(task.id, h)}
+      onCycleWeather={() => cycleWeather(task.id)}
     />
   );
 
@@ -1051,12 +1090,15 @@ function TaskItem({
   onOpenPriorityMenu,
   onClosePriorityMenu,
   onSetPriority,
-  onSetHoursEstimate
+  onSetHoursEstimate,
+  onCycleWeather
 }) {
   const priorityColor = task.priority ? PRIORITY_COLORS[task.priority] : null;
   const priorityLabel = task.priority
     ? `Priority: ${PRIORITY_LABELS[task.priority]}. Click to change.`
     : 'Set priority';
+  const weather = task.weather ? WEATHER_CONFIG[task.weather] : null;
+  const WeatherIcon = weather ? weather.Icon : Sun;
 
   return (
     <li className="group flex items-center gap-2 px-3 py-2.5 rounded-lg hover-warm transition-colors">
@@ -1108,6 +1150,21 @@ function TaskItem({
               value={task.hours_estimate}
               onSave={onSetHoursEstimate}
             />
+          )}
+          {isPrioritized && (
+            <button
+              onClick={onCycleWeather}
+              className={`p-1.5 hover:bg-black/5 rounded-md transition-colors ${task.done ? 'opacity-50' : ''}`}
+              aria-label={weather ? `Weather: ${weather.label}. Click to change.` : 'Set weather'}
+              title={weather ? weather.label : 'Weather: none'}
+            >
+              <WeatherIcon
+                className="w-4 h-4"
+                stroke={weather ? weather.color : '#B5AE9D'}
+                strokeWidth={1.75}
+                style={weather ? undefined : { opacity: 0.45 }}
+              />
+            </button>
           )}
           {isPrioritized && (
             <div className="relative">
