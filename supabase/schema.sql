@@ -22,6 +22,7 @@ create table if not exists public.tasks (
   starred boolean default false not null,
   priority text check (priority is null or priority in ('high', 'medium', 'low')),
   hours_estimate numeric check (hours_estimate is null or hours_estimate >= 0),
+  weather text check (weather is null or weather in ('sun', 'rain', 'snow')),
   created_at timestamptz default now() not null,
   done_at timestamptz
 );

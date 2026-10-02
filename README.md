@@ -117,7 +117,7 @@ Row-level security policies ensure users can only read and write their own rows.
 - Edit task text by clicking on it
 - Star tasks to float them to the top
 - Edit list names (pencil icon next to the list in the sidebar)
-- Per-list priority mode: flip the flag icon on a list to enable high/medium/low priorities on its tasks. Prioritized lists group tasks by priority section. Each task in a prioritized list can also have an optional hours estimate, and section headers show running totals.
+- Per-list priority mode: flip the flag icon on a list to enable high/medium/low priorities on its tasks. Prioritized lists group tasks by priority section. Each task in a prioritized list can also have an optional hours estimate, and section headers show running totals. A weather toggle on each task cycles none, sun, rain, snow.
 - Confirm dialogs for destructive actions
 - Responsive design: persistent sidebar on desktop, drawer on mobile
 - Magic-link auth (no passwords)
@@ -130,4 +130,5 @@ The `supabase/schema.sql` file is the canonical schema for a fresh install. When
 Applied migrations:
 
 - `001_priorities.sql` — adds `lists.prioritized` (boolean) and `tasks.priority` (text, nullable). Apply if your existing database predates the priority feature.
+- `003_weather.sql` — adds `tasks.weather` (text: sun, rain, snow; nullable). Apply to use the weather toggle.
 - `002_hours_estimate.sql` — adds `tasks.hours_estimate` (numeric, nullable). Apply if your database predates the hours-estimate feature on prioritized tasks.
